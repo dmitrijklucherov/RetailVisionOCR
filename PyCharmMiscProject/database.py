@@ -1,10 +1,15 @@
+import os
+from dotenv import load_dotenv
 import psycopg
+load_dotenv()
 
 class WBDatabase:
     def __init__(self):
+        # Забираем пароль из сейфа
+        pass_bd = os.getenv("DB_PASSWORD")
     # Устанавливае соединение
         self.connection = psycopg.connect(
-            dbname = "postgres", user = "postgres", password = "password", host = "127.0.0.1", port = "5432"
+            dbname = "postgres", user = "postgres", password = pass_bd, host = "127.0.0.1", port = "5432"
         )
         self.cursor = self.connection.cursor()
         # Создаем таблицу в PostgreSQL
@@ -34,7 +39,8 @@ class WBDatabase:
         self.cursor.close()
         self.connection.close()
         print("Все изменения зафиксированы, соединение закрыто")
-# Тест создания и записи кода
+# Тест создания и записи кода[
+
 if __name__ == "__main__":
     db = WBDatabase()
     db.create_table()

@@ -1,8 +1,11 @@
 # Скритп №1. Создан 10.09.26 в 23-35
+import os
+from dotenv import load_dotenv
 import vk_api
             # Из библиотеки импортируем: приемник сообщений и определитель типа
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
-TOKEN = "vk1.a.x03CmHzoUNEf6gy8rJwCABTDMuTGf5ONSC5Cwh8Yx9Cv4SGgTMeaZ1yYqeiEJ_ewv-RsmJ1deLE8sxOZfSYQeC2XJxzA7xKwjFCFY1XgWh5__wzuwNX8K7xn5IjZQsqX_EOTNsyqtTQN3dbRyr4YKVnONjAuDo__7U5MofqXo8YRKWqXlJKzAsIAD0SGFqnsrOT2YgF2U7K5KoJqRuFPGQ"
+load_dotenv()
+TOKEN = os.getenv("VK_TOKEN")
 GROUP_ID = "125630665"
 
 def start_bot():
