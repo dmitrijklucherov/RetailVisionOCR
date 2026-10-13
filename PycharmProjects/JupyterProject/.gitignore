@@ -1,0 +1,7 @@
+.venv/
+.env
+data/
+models/
+my_history.md
+COPY.py
+.idea/
