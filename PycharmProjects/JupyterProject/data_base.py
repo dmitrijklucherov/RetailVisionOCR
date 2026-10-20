@@ -31,7 +31,7 @@ class Database:
         await self.pool.open()
         print("Асинхронный пул соединений успешно запущен и готов к работе!")
     # Асинхронная функция для записи данных сразу в три таблицы и возврата всей истории цены
-    async def insert_and_retail_data(self, vk_id, url, sku_id, price, stock_count):
+    async def insert_and_retail_data(self, vk_id, url, sku_id, price, stock_count, title):
         # Блокируем запись нулей в цену и id
         if sku_id == 0 or price == 0:
             return None
@@ -50,12 +50,14 @@ class Database:
                 user_id = (await cursor.fetchone())[0]
                 # Запись или обновление продукта с защитой от повторов
                 query_products = """
-                    insert into products (user_id, url, sku_id)
-                    values (%s, %s, %s)
-                    on conflict (sku_id) do update set url = excluded.url
+                    insert into products (user_id, url, sku_id, title)
+                    values (%s, %s, %s, %s)
+                    on conflict (sku_id) do update set 
+                        url = excluded.url,
+                        title = excluded.title
                     returning product_id;
                 """
-                await cursor.execute(query_products, (user_id, url, sku_id))
+                await cursor.execute(query_products, (user_id, url, sku_id, title))
                 # Забираем id продукта
                 product_id = (await cursor.fetchone())[0]
                 # Запись новой строки в историю цен
@@ -110,7 +112,10 @@ async def main():
         await db.connect()
         print("База успешно подключена!")
 
-        analysis_result = await db.insert_and_retail_data("99", "https://magnit.ru", 900000008, 150, 10)
+        # Тестируем наш асинхронный комбайн обновленным запросом розницы!
+        analysis_result = await db.insert_and_retail_data(
+            "99", "https://magnit.ru", 900000008, 150, 10, "Картофель фасованный Магнит"
+        )
         print(f"Результат: {analysis_result}")
 
     except Exception as e:

@@ -1,9 +1,9 @@
-# Регулярки для точного поиска данных, модель для полученных результатов, вариации двойных/многочисленных типов
+# Регулярки для точного поиска данных, модель для полученных результатов, вариации двойных/многочисленных типов, мини-ИИ для интелектуального поиска
 import asyncio
 import re
 from pydantic import BaseModel, Field
 from typing import List, Optional, Tuple
-
+from ai_search import AISearch
 
 # 1.Описываем модель, которую хотим получить: id товара, ссылку, топ товаров, срок анализа, кодовые значения, текст
 class FilterMessage(BaseModel):
@@ -16,6 +16,8 @@ class FilterMessage(BaseModel):
 # Класс Фильтр с 4 функциями выборки: id, спецсимволы, управляющие цифры, оставшийся текст
 # Для красоты и порядка используем декоратор, что бы функции работали независимо в одном месте
 class Filter:
+    # Один экземляр поиска для всего класса
+    ai_search = AISearch()
     @staticmethod
     async def filter_url(text: str) -> List[int]:
         # Перебираем весь текст и ищем https:// Причем s - необязательно. Конец ссылки это пробел
@@ -102,11 +104,13 @@ class Filter:
         clean_text_words = await cls.filter_clean_text(raw_text_stripped, found_links)
         # Ищем в базе по артикулу, если не нашли по id
         if not found_ids and len(clean_text_words) > 2 and db_connection is not None:
-            db_id = await db_connection.find_product_id_by_name(clean_text_words)
-            if isinstance(db_id, list):
-                found_ids.extend([int(x) for x in db_id])
-            else:
-                found_ids.append(int(db_id))
+            # Забираем все товары из базы через пул соеденений
+            all_products = await db_connection.get_all_products_for_ai()
+            # Ищем топ-3 совпадений и вытаскиваем из кортежей артикулы
+            if all_products:
+                best_matches = await cls.ai_search.find_best_matches(clean_text_words, all_products, limit = 3)
+                for match in best_matches:
+                    found_ids.append(match[1])
         # Собираем выходную модель
         return FilterMessage(
             product_id=found_ids,
@@ -120,25 +124,31 @@ class Filter:
 
 
 # =====================================================================
-# 4. ЗАВОДСКОЙ СТЕНД ИСПЫТАНИЙ ДЛЯ КНОПКИ RUN
+# 4. ЗАВОДСКОЙ СТЕНД ИСПЫТАНИЙ ДЛЯ КНОПКИ RUN (С ИМИТАЦИЕЙ БАЗЫ ДАННЫХ)
 # =====================================================================
+class MockDatabase:
+    """Временный симулятор базы данных для проверки ИИ-поиска прямо на стенде"""
+    async def get_all_products_for_ai(self):
+        return [
+            (1, 900000008, "Картофель фасованный Магнит", "https://magnit.ru"),
+            (2, 800000002, "Лук репчатый желтый отборный", "https://magnit.ru"),
+            (3, 700000003, "Укроп свежий зелень 50г", "https://magnit.ru")
+        ]
+
 async def main():
-    # 🎭 ИСПЫТАТЕЛЬНЫЙ ХАОС: Имитируем реальное грязное сообщение от пользователя в ВК.
-    # Здесь есть: мусорные знаки (!!, @@), английский и русский текст,
-    # длинный артикул (4004323), ТОП (5), ДНИ (14) и живая ссылка Магнита.
-    test_message = input("Введите тест")
+    print("=== [ОТК] ЗАПУСК СИСТЕМНЫХ ИСПЫТАНИЙ КЛАССА FILTER И ИИ ===")
+    test_message = input("Введите грязный запрос (например, 'хочу картоху 5'): ")
 
-    print("=== [ОТК] ЗАПУСК СИСТЕМНЫХ ИСПЫТАНИЙ КЛАССА FILTER ===")
-    print(f"Входящее сырое сообщение: '{test_message}'\n")
+    # Создаем фейковый коннект к базе для теста
+    mock_db = MockDatabase()
 
-    # Запускаем главный диспетчерский пульт clean_message
-    result = await Filter.clean_message(test_message)
+    # Запускаем главный диспетчерский пульт clean_message, передав туда симулятор БД
+    result = await Filter.clean_message(test_message, db_connection=mock_db)
 
-    print("=== [ОТК] ВЕРИФИКАЦИЯ СОБРАННОЙ ООП-МОДЕЛИ ИЗ ПАМЯТИ ===")
-    # Распаковываем Pydantic-модель в красивый словарь
+    print("\n=== [ОТК] ВЕРИФИКАЦИЯ СОБРАННОЙ ООП-МОДЕЛИ ИЗ ПАМЯТИ ===")
     report = result.model_dump()
 
-    print(f"1. 📦 Корзина ID (product_id): {report['product_id']}")
+    print(f"1. 📦 Корзина ID (product_id): {report['product_id']} <-- Сюда ИИ подставил найденный артикул!")
     print(f"2. 🔗 Наличие ссылок (links):   {report['links']}")
     print(f"3. 🕹️ Спецкоманда (command):     {report['command']}")
     print(f"4. 📊 Лимит ТОП (top_limit):   {report['top_limit']}")
@@ -148,7 +158,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    # Запуск асинхронного Event Loop твоей быстрой горячей клавишей!
     asyncio.run(main())
 
 

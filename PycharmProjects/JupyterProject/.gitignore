@@ -5,3 +5,4 @@ models/
 my_history.md
 COPY.py
 .idea/
+__pycache__/
