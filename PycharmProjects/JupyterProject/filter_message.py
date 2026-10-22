@@ -13,11 +13,38 @@ class FilterMessage(BaseModel):
     days_depth: Optional[int] = Field(default=0, description="Глубина истории(от 10 до 100)")
     command: Optional[str] = Field(default=None, description="Кодовые знаки")
     clean_text: str = Field(default="", description="Весь чистый текст")
+    # Функция распределения ответов
+    async def get_report_text(self, db=None, analytics: Optional[Tuple] = None) -> str:
+        # 1.Артикул. 2. Ссылка. 3. Непонятное сообщение
+        if self.product_id:
+            if analytics:
+                url, sku_id, current_price, stock, min_price = analytics
+                month_limit = self.days_depth if (self.days_depth and self.days_depth > 0) else 1
+                return (
+                    f"Товар найден через ИИ!\n"
+                    f"Артикул: {sku_id}\n"
+                    f"Текущая цена: {current_price} руб. (Остаток: {stock} шт.)\n"
+                    f"Минимальная цена: {min_price} руб., за {month_limit} мес.\n"
+                    f"Ссылка: {url}"
+                )
+            else:
+                return f"Артикул распознан: {self.product_id[0]} Но в базе нет о нем данных"
+        if self.links:
+            return (
+                f"Ссылка получена! Этого товара еще нет в нашей базе данных.\n"
+                f"Я передал её в модуль мониторинга цен. Запустил первичный парсинг и анализ, "
+                f"совсем скоро история цен появится в системе!"
+            )
+        return (
+            f"Не совсем понял что вы мне прислали. Повторите запрос.\n"
+        )
+
 # Класс Фильтр с 4 функциями выборки: id, спецсимволы, управляющие цифры, оставшийся текст
 # Для красоты и порядка используем декоратор, что бы функции работали независимо в одном месте
 class Filter:
     # Один экземляр поиска для всего класса
     ai_search = AISearch()
+
     @staticmethod
     async def filter_url(text: str) -> List[int]:
         # Перебираем весь текст и ищем https:// Причем s - необязательно. Конец ссылки это пробел
@@ -31,6 +58,7 @@ class Filter:
         id_pattern = re.compile(r'\b\d{7,11}\b')
         found_ids = [int(n) for n in id_pattern.findall(links_str)]
         return found_ids
+
     # Находим спецсимволы, при условии что в сообщении может быть только один код и все
     # Убираем пробелы, переводим в нижний регистр, создаем словарь ключей-значений и ищем совпадения
     @staticmethod
@@ -45,6 +73,7 @@ class Filter:
         if clean_raw_text in special_commands_map:
             command = special_commands_map[clean_raw_text]
         return command
+
     # Находим в тексте короткие(до 3-х знкаов) числа для сбора информации, анализа, статистики
     # Пропускам ссылки полностью, задаем кол-во цифр - не более 3 и
     @staticmethod
@@ -69,6 +98,7 @@ class Filter:
             else:
                 top_limit, days_depth = None, control_list[-1]
         return top_limit, days_depth
+
     # Функция очистки текста. Нужно получить название товара для поиска в базе
     # Убираем ссылки, все цифры и спецзнаки и на всякий случай пробелы.
     @staticmethod
@@ -81,37 +111,55 @@ class Filter:
         text_clear_spaces = re.sub(r'\s+', ' ', clean_words)
         final_clean_text = text_clear_spaces.strip()
         return final_clean_text
+
     # Принимаем сообщения распределяем их по методам и собираем модель
     @classmethod
     async def clean_message(cls, raw_text: str, db_connection=None) -> FilterMessage:
-        # Сначала проверяем на наличие спецкоманд и если они есть останавливаем дальнейший код
         raw_text_stripped = raw_text.strip()
         command = await cls.filter_command(raw_text_stripped)
         if command:
             return FilterMessage(command=command)
-        # Собираем все ссылки и ищем артикула
+
+        # 1. Вытаскиваем все ссылки из сообщения
         found_links = re.findall(r'https?://\S+', raw_text_stripped)
-        found_ids = await cls.filter_url(raw_text_stripped)
-        if not found_ids:
-            id_pattern = re.compile(r'\b\d{7,11}\b')
-            found_ids = [int(n) for n in id_pattern.findall(raw_text_stripped)]
-        # Убираем случайные числа из ссылок
+
+        # 2. Ищем артикулы в тексте ссылки (убираем \b, чтобы ловить внутри путей /catalog/12345/)
+        id_pattern = re.compile(r'\d{7,11}')
+        found_ids = [int(n) for n in id_pattern.findall(raw_text_stripped) if int(n) != 0]
+
+        # 3. Полностью очищаем текст от ссылок
         text_for_analytics = raw_text_stripped
         for link in found_links:
             text_for_analytics = text_for_analytics.replace(link, "")
+
+        # Собираем лимиты и чистим слова
         # Вычисляем числа для статистики и вытаскиваем текст
         top_limit, days_depth = await cls.filter_analytics_trigger(text_for_analytics, found_ids)
         clean_text_words = await cls.filter_clean_text(raw_text_stripped, found_links)
-        # Ищем в базе по артикулу, если не нашли по id
-        if not found_ids and len(clean_text_words) > 2 and db_connection is not None:
-            # Забираем все товары из базы через пул соеденений
+
+        # 🎯 ЗАЩИТА: Если в сообщении изначально БЫЛА ссылка (found_links),
+        # мы ЖЕСТКО запрещаем текстовый ИИ-поиск, даже если в тексте остались хвосты параметров (?size=...)
+        if not found_ids and not found_links and len(clean_text_words) > 2 and db_connection is not None:
             all_products = await db_connection.get_all_products_for_ai()
-            # Ищем топ-3 совпадений и вытаскиваем из кортежей артикулы
             if all_products:
-                best_matches = await cls.ai_search.find_best_matches(clean_text_words, all_products, limit = 3)
+                best_matches = await cls.ai_search.find_best_matches(clean_text_words, all_products, limit=3)
                 for match in best_matches:
-                    found_ids.append(match[1])
-        # Собираем выходную модель
+                    if isinstance(match, (tuple, list)) and len(match) > 1:
+                        sku_id = match[1]
+                        if int(sku_id) != 0:
+                            found_ids.append(int(sku_id))
+
+        # Собираем готовую модель.
+        # Если артикул из ссылки вытащен — он будет в product_id.
+        # Если ссылка есть, но артикула в ней нет (не парсится регуляркой) — сработает сценарий новой ссылки.
+        # print(FilterMessage(
+        #     product_id=found_ids,
+        #     links=found_links,
+        #     command=command,
+        #     top_limit=top_limit,
+        #     days_depth=days_depth,
+        #     clean_text=clean_text_words
+        # )
         return FilterMessage(
             product_id=found_ids,
             links=found_links,
@@ -123,42 +171,7 @@ class Filter:
 
 
 
-# =====================================================================
-# 4. ЗАВОДСКОЙ СТЕНД ИСПЫТАНИЙ ДЛЯ КНОПКИ RUN (С ИМИТАЦИЕЙ БАЗЫ ДАННЫХ)
-# =====================================================================
-class MockDatabase:
-    """Временный симулятор базы данных для проверки ИИ-поиска прямо на стенде"""
-    async def get_all_products_for_ai(self):
-        return [
-            (1, 900000008, "Картофель фасованный Магнит", "https://magnit.ru"),
-            (2, 800000002, "Лук репчатый желтый отборный", "https://magnit.ru"),
-            (3, 700000003, "Укроп свежий зелень 50г", "https://magnit.ru")
-        ]
 
-async def main():
-    print("=== [ОТК] ЗАПУСК СИСТЕМНЫХ ИСПЫТАНИЙ КЛАССА FILTER И ИИ ===")
-    test_message = input("Введите грязный запрос (например, 'хочу картоху 5'): ")
-
-    # Создаем фейковый коннект к базе для теста
-    mock_db = MockDatabase()
-
-    # Запускаем главный диспетчерский пульт clean_message, передав туда симулятор БД
-    result = await Filter.clean_message(test_message, db_connection=mock_db)
-
-    print("\n=== [ОТК] ВЕРИФИКАЦИЯ СОБРАННОЙ ООП-МОДЕЛИ ИЗ ПАМЯТИ ===")
-    report = result.model_dump()
-
-    print(f"1. 📦 Корзина ID (product_id): {report['product_id']} <-- Сюда ИИ подставил найденный артикул!")
-    print(f"2. 🔗 Наличие ссылок (links):   {report['links']}")
-    print(f"3. 🕹️ Спецкоманда (command):     {report['command']}")
-    print(f"4. 📊 Лимит ТОП (top_limit):   {report['top_limit']}")
-    print(f"5. 📅 Глубина дней (days_depth): {report['days_depth']}")
-    print(f"6. 📝 Отмытый текст (clean_text): '{report['clean_text']}'")
-    print("========================================================\n")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
 
 
 
