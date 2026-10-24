@@ -84,7 +84,7 @@ class Database:
     async def get_product_analytics_data(self, search_word, months_limit):
         query_products = """
             select p.url, p.sku_id, h.price, h.stock_count, 
-                (select min(price) from price_history where product_id = p.product_id and check_date >= now() - make_interval (month => %s)) as min_price
+                (select min(price) from price_history where product_id = p.product_id and check_date >= now() - make_interval (months => %s)) as min_price
             from products p
             join price_history h on p.product_id = h.product_id
             where p.url like %s
@@ -93,43 +93,28 @@ class Database:
         """
         # Ищем фразу в любой части, % % - отсечение лишнего(все что внутри остается) и сохраняем в новую переменную
         formatted_search = f"%{search_word}%"
-        async with self.pool.cursor() as conn:
+        async with self.pool.connection() as conn:
             async with conn.cursor() as cursor:
                 # Передаем значения в базу: 1.Весь запрос. 2.Время в месяцах вместо первой заглушки. 3.Искомое слово вместо второй заглушки
                 await cursor.execute(query_products, (months_limit, formatted_search))
                 # Забираем эту строку в виде кортежа и возвращаем
                 return await cursor.fetchone()
+    # Функция выгрузки данных из базы в нейросеть
+    async def get_all_products_for_ai(self):
+        async with self.pool.connection() as conn:
+            async with conn.cursor() as cursor:
+                query_ai = """
+                    select product_id, sku_id, title, url
+                    from products;
+                """
+                await cursor.execute(query_ai)
+                return await cursor.fetchall()
     # Закрываем соединение
     async def disconnect(self):
         if self.pool:
             await self.pool.close()
             print("Все изменения зафиксированы, соединение закрыто")
 
-# Тест создания и записи кода
-async def main():
-    db = Database()
-    try:
-        await db.connect()
-        print("База успешно подключена!")
-
-        # Тестируем наш асинхронный комбайн обновленным запросом розницы!
-        analysis_result = await db.insert_and_retail_data(
-            "99", "https://magnit.ru", 900000008, 150, 10, "Картофель фасованный Магнит"
-        )
-        print(f"Результат: {analysis_result}")
-
-    except Exception as e:
-        print(f"\n❌ КРИТИЧЕСКАЯ ОШИБКА ПОДКЛЮЧЕНИЯ: {repr(e)}\n")
-    finally:
-        await db.disconnect()
-
-
-if __name__ == "__main__":
-    # Принудительно приказываем Windows запустить совместимый асинхронный движок
-    asyncio.run(
-        main(),
-        loop_factory=lambda: asyncio.SelectorEventLoop(selectors.SelectSelector())
-    )
 
 
 
