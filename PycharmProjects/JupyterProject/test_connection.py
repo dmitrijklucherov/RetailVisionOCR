@@ -1,20 +1,35 @@
 import asyncio
 import os
 from playwright.async_api import async_playwright
+from magnit_parser import get_magnit_data
 
-async def try_connect(page, url: str, name: str):
+async def try_connect(page, url: str):
     try:
         # Переходим по ссылке и ждем закгрузку сайта
         response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        status = response.status
-        print(f"Status code: {status}")
+        # Если получили код 200, то определяем что за магазин и передаем на обработку
+        if response and response.status ==200:
+            # Ждем 2 секунды и забираем html
+            await asyncio.sleep(2)
+            html_content = await page.content()
+            # Определяем какой файл вызвать для разбора по совпадению в ссылке
+            if "magnit" in url.lower():
+                price, title = await get_magnit_data(html_content)
+                if price:
+                    print(f"Цена найдена: {price}")
+                else:
+                    print("Цена не найдена")
+            elif response:
+                print(f"Ошибка сервера: Статус {response.status}")
+            else:
+                print("Сервер недоступен")
     except Exception as e:
         print(f"Ошибка: {e}")
 async def main():
     url_suite = input("Введите ссылку:") # Для тестов пока так
     if not url_suite:
         return
-    site_name = "Магнит" if "magnit" in url_suite.lower() else "Пятрочка" if "5ka" in url_suite.lower() or "pyaterochka" in url_suite.lower() else "ПАРСЕР"
+    # site_name = "Магнит" if "magnit" in url_suite.lower() else "Пятрочка" if "5ka" in url_suite.lower() or "pyaterochka" in url_suite.lower() else "ПАРСЕР"
     async with async_playwright() as p:
         # Временная папка гостевого профиля
         guest_profile = os.path.join(os.getcwd(), "guest_browse_data")
@@ -36,7 +51,7 @@ async def main():
         # Берем чистую вкладку
         page=context.pages[0] if context.pages else await context.new_page()
         # Тестируем вход на сайт
-        await try_connect(page, url_suite, site_name)
+        await try_connect(page, url_suite)
         await asyncio.sleep(10)
         await context.close()
 
