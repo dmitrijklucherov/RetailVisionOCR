@@ -1,28 +1,18 @@
 import asyncio
 import os
 from playwright.async_api import async_playwright
-from magnit_parser import get_magnit_data
+from magnit_parser import process_magnit
 
 async def try_connect(page, url: str):
     try:
-        # Переходим по ссылке и ждем закгрузку сайта
-        response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        # Если получили код 200, то определяем что за магазин и передаем на обработку
-        if response and response.status ==200:
-            # Ждем 2 секунды и забираем html
-            await asyncio.sleep(2)
-            html_content = await page.content()
-            # Определяем какой файл вызвать для разбора по совпадению в ссылке
-            if "magnit" in url.lower():
-                price, title = await get_magnit_data(html_content)
-                if price:
-                    print(f"Цена найдена: {price}")
-                else:
-                    print("Цена не найдена")
-            elif response:
-                print(f"Ошибка сервера: Статус {response.status}")
+        if "magnit" in url.lower():
+            price, title = await process_magnit(page, url)
+            if price:
+                print(f"Цена найдена: {price}")
             else:
-                print("Сервер недоступен")
+                print("Цена не найдена")
+        else:
+            print("Сервер недоступен")
     except Exception as e:
         print(f"Ошибка: {e}")
 async def main():

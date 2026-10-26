@@ -1,3 +1,4 @@
+import asyncio
 import re
 from typing import Optional, Tuple
 from bs4 import BeautifulSoup
@@ -15,39 +16,59 @@ def extract_price_by_html(soup: BeautifulSoup) -> Optional[int]:
         print(f"Ошибка HTL: {e}")
     return None
 # 2.Функция поиска цены в JSON
-def extract_price_by_json(html_text: str) -> Optional[int]:
+def extract_price_by_json(html_text: str) -> Optional[float]:
     try:
-        match = re.search(r'"actualPrice":\s*(\d+)', html_text)
+        match = re.search(r'"actualPrice":\s*(\d+(?:\.\d+)?)', html_text)
         if match:
-            return int(match.group(1))
+            return float(match.group(1))
+        # Запасной вариант поиска
         match_fallback = re.search(r'"price":\s*(\d+)', html_text)
         if match_fallback:
-            return int(match_fallback.group(1))
+            return float(match_fallback.group(1))
     except Exception as e:
         print(f"Ошибка JSON: {e}")
     return None
-# Сравниваем весы доверия двух методов и возвращаем отчет
-async def get_magnit_data(html_content: str) -> Tuple[Optional[int], str]:
+# Функция сбора данных и предоставления отчета
+async def get_magnit_data(html_content: str) -> Tuple[Optional[float ], str]:
     soup = BeautifulSoup(html_content, "html.parser")
+    # Извлекаем название товара
     title_el = soup.find("h1")
     title = title_el.text.strip() if title_el else "Товар Магнит"
     print(f"Товар определен: {title}")
-    # Методы сбора данных
-    html_price = extract_price_by_html(soup)
+    # Собираем данные двумя методами
+    html_price_raw = extract_price_by_html(soup)
     json_price = extract_price_by_json(html_content)
-    # Поиск цены: четыре варианта нахождения и возврата цены и названия
+    # Переводим копейуи в рубли
+    html_price = (html_price_raw / 100) if html_price_raw is not None else None
+    # Поиск цены: 1.Оба источника. 2.Из HTML. 3.Из JSON скрипта. 4.Ничего не нашли
     if html_price is not None and json_price is not None:
-        html_price = html_price/100
         if html_price == json_price:
-            print("Цена верна в обоиx случаях")
             return html_price, title
         else:
-           print(f"Оставляем только ту, которой доверяем. Цена1: {html_price}, Цена2: {json_price}")
-           return json_price, title
+           return html_price, title
     if html_price is not None:
-        print("Остается только цену из json")
-        return json_price, title
-    if json_price is not None:
-        print("Оставляем только цену из html")
         return html_price, title
+    if json_price is not None:
+        return json_price, title
     return None, title
+# Локальные настройки браузера только для "Магнит"
+async def process_magnit(page, url: str) -> Tuple[Optional[float], str]:
+    try:
+        await page.context.add_cookies([{
+            "name": "shopCode",
+            "value": "%22570061%22",
+            "domain": "magnit.ru",
+            "path": "/"
+        }])
+        # Переход на страницу с ожиданием 3 сек
+        response = await page.goto(url, wait_until="networkidle", timeout=30000)
+        # Если нет страницы или код статутса не 200, получаем статус ошибки и возварщаем None
+        # Делаем задержку в 2 сек для уверенной работы скрипта и запускаем парсинг
+        if not response or response.status != 200:
+            status = response.status if response else "Нет ответа"
+            return None, "Неизвестный товар"
+        await asyncio.sleep(2)
+        html_content = await page.content()
+        return await get_magnit_data(html_content)
+    except Exception as e:
+        return None, "Ошибка парсинга"
