@@ -1,99 +1,88 @@
-import asyncio
 import os
-import selectors
-import tracemalloc
+import time
+import logging
+import requests
 from dotenv import load_dotenv
 from vk_api import vk_api
-# Из библиотеки импортируем: приемник сообщений и определитель типа
 from vk_api.bot_longpoll import VkBotEventType, VkBotLongPoll
-# Импортируем защиту от повторов
-from vk_api.utils import get_random_id
-
-from data_base import Database
-from filter_message import Filter
+from vk_api.exceptions import ApiError
+# from filter_message import "Функция для передачи - строка 23"
 
 load_dotenv()
 TOKEN = os.getenv("VK_TOKEN")
 GROUP_ID = os.getenv("GROUP_ID")
 
-
-async def start_bot():
-    # global vk_message_object
+# Функция принимает сообщение, отправляет в другой файл и отвечает пользователю
+def handle_event(event, vk):
+    if event.type == VkBotEventType.MESSAGE_NEW:
+        message = event.obj.message
+        text = message['text']
+        peer_id = message['peer_id']
+        from_id = message['from_id']
+        # Отправляем в filter_message, ждем анализ и отвечаем
+        try:
+            bot_reply = "filter_message"(text, peer_id)  # Тут должна быть функция из фильтра
+            if bot_reply:
+                vk.messages.send(
+                    peer_id=peer_id,
+                    message=bot_reply,
+                    random_id=0
+                )
+                logging.info(f"Пользователь:{from_id}, сделал запрос{text}")
+        # Ошибка №1: Проблемы со стороны VK API
+        except ApiError as vk_error:
+            error_code = vk_error.error.get('error_code')
+            error_msg = vk_error.error.get('error_msg')
+            logging.error(f"Ошибка VK API! Код:{error_code} для {peer_id}: {error_msg}")
+            # Проверка на блокировку от пользователя
+            if error_code == 901:
+                logging.warning(f"Пользователь {peer_id} заблокировал сообщения от сообщества")
+        # Ошибка №2: Проблемы с логикой бота, а так же уведомление в сообщении об этом
+        except(ValueError, KeyError, TypeError) as code_error:
+            logging.error(f"Проблемы с ботом! Ошибка: {code_error}")
+            try:
+                vk.messages.send(peer_id=peer_id, message="Извините, произошла внутренняя ошибка", random_id=0)
+            # Ловим ошибки при отправке уведомления об ошибке
+            except ApiError as send_error:
+                logging.warning(f"Не удалось отправить юзеру {peer_id} сообщение об ошибке {send_error}")
+            except requests.exceptions.RequestException as net_error:
+                logging.warning(f"Сбой сети при попытке отправить сообщение об ошибке для {peer_id}: {net_error}")
+# Функция бесконечного ожидания сообщенея
+def start_bot():
     vk_session = vk_api.VkApi(token=TOKEN)
     vk = vk_session.get_api()
 
-    # ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ
-    db = Database()
-    await db.connect()
-
-    # Открываем канал связи с ВК
-    longpoll = VkBotLongPoll(vk_session, group_id=GROUP_ID)
-
-    # Захватываем текущий асинхронный цикл событий для выполнения отправки сообщений в потоке
-    loop = asyncio.get_running_loop()
-
-    # Запускаем бесконечный цикл перехвата входящих сообщений
     while True:
         try:
-            events = longpoll.listen()
-            for event_vk in events:
-                # Если сообщение есть, то безопасно распаковываем его для отправки на анализ
-                if event_vk.type == VkBotEventType.MESSAGE_NEW:
-                    vk_message_object = event_vk.raw.get("object", {}).get("message", {})
-                    vk_user_message = vk_message_object.get("text", "")
-                    vk_peer_id = vk_message_object.get("peer_id", 0)
-                    # Если нет текста в соообщении, проверяем упаковку ВК
-                    if not vk_user_message:
-                        attachments = vk_message_object.get("attachment", [])
-                        for attach in attachments:
-                            if attach.get("type") == "link":
-                                vk_user_message = attach.get("link", {}).get("url", "")
-                    # Если сообщения нет - пропускаем
-                    if not vk_user_message:
-                        continue
-                    # Отправляем сообщение на анализ
-                    action = await Filter.clean_message(vk_user_message, db_connection=db)
-                    # Пока пропускаем спец-команды
-                    if action.command == "!!!":
-                        continue
-                    # Проверяем что список артикулов не пустой
-                    analytics = None
-                    # Проверяем, что список артикулов не пустой
-                    if action.product_id:
-                        # 🎯 ИСПРАВЛЕНИЕ: Берем первое число из списка, а не весь список со скобками!
-                        target_sku = action.product_id[0]
-
-                        month_limit = action.days_depth if (action.days_depth and action.days_depth > 0) else 1
-                        analytics = await db.get_product_analytics_data(str(target_sku), month_limit)
-
-                    # Вызываем асингую модель ответа, передавая полученные данные
-                    report_text = await action.get_report_text(db=db, analytics=analytics)
-                    await loop.run_in_executor(
-                        None,
-                        lambda: vk.messages.send(
-                            peer_id=vk_peer_id,
-                            message=report_text,
-                            random_id=get_random_id(),
-                        ),
-                    )
-        except Exception as e:
-            print(f"Сбой! Перезапуск: {repr(e)}")
-            # print(vk_message_object)
-            await asyncio.sleep(3)
+            longpoll = VkBotLongPoll(vk_session, group_id=GROUP_ID)
+            for event in longpoll.listen():
+                handle_event(event, vk)
+        # Ошибка №1: Проблемы с соеденением
+        except requests.exceptions.RequestException as net_error:
+            logging.error(f"Ошибка сети: {net_error}")
+            logging.info("Попытка переподключения через 5 сек...\n")
+            time.sleep(5)
+        # Ошибка №2: Сброс сессии
+        except ApiError as vk_error:
+            error_code = vk_error.error.get('error_code')
+            error_msg = vk_error.error.get('error_msg')
+            logging.error(f"\nОшибка! Код {error_code}: {error_msg}")
+            logging.info("Перезагрузка через 5 сек")
+            time.sleep(5)
 
 
-async def main():
-    await start_bot()
-
-
+# Настройка запуска с логированием в файл
 if __name__ == "__main__":
-    # Включаем отслеживание асинхронных задач
-    tracemalloc.start()
-
-    # Безопасный пуск асинхронного движка на Windows без блокировок
-    asyncio.run(
-        main(),
-        loop_factory=lambda: asyncio.SelectorEventLoop(
-            selectors.SelectSelector()
-        ),
+    # Создаем папку для логов
+    os.makedirs("logs", exit_ok=True)
+    # Настройка логирования
+    logging.basicConfig(
+        level=logging.INFO, # Обычные рабочие события бота
+        filename="logs/VKbot.log", # Файл, куда сохранять лог
+        filemode="a", # Дописывать новое, не стирая старое
+        format="%(asctime)s - [%(levelname)s] - %(message)s", # Формат даты и сообщения
+        datefmt="%Y-%m-%d %H:%M:%S" # Формат времени
     )
+    # Первая запись и запуск
+    logging.info("---Скрипт бота запущен пользователем---")
+    start_bot()
