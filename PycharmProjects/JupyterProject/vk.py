@@ -6,6 +6,9 @@ from dotenv import load_dotenv
 from vk_api import vk_api
 from vk_api.bot_longpoll import VkBotEventType, VkBotLongPoll
 from vk_api.exceptions import ApiError
+
+from filter_message import analyze_message
+
 # from filter_message import "Функция для передачи - строка 23"
 
 load_dotenv()
@@ -21,7 +24,7 @@ def handle_event(event, vk):
         from_id = message['from_id']
         # Отправляем в filter_message, ждем анализ и отвечаем
         try:
-            bot_reply = "filter_message"(text, peer_id)  # Тут должна быть функция из фильтра
+            bot_reply = analyze_message(text, peer_id)
             if bot_reply:
                 vk.messages.send(
                     peer_id=peer_id,
@@ -74,7 +77,7 @@ def start_bot():
 # Настройка запуска с логированием в файл
 if __name__ == "__main__":
     # Создаем папку для логов
-    os.makedirs("logs", exit_ok=True)
+    os.makedirs("logs", exist_ok=True)
     # Настройка логирования
     logging.basicConfig(
         level=logging.INFO, # Обычные рабочие события бота

@@ -71,4 +71,4 @@ async def process_magnit(page, url: str) -> Tuple[Optional[float], str]:
         html_content = await page.content()
         return await get_magnit_data(html_content)
     except Exception as e:
-        return None, "Ошибка парсинга"
+        return None, f"Ошибка парсинга {e}"
