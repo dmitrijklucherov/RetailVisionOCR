@@ -34,7 +34,7 @@ async def get_magnit_data(html_content: str) -> Tuple[Optional[float ], str]:
     # Извлекаем название товара
     title_el = soup.find("h1")
     title = title_el.text.strip() if title_el else "Товар Магнит"
-    print(f"Товар определен: {title}")
+    print(f"Товар определен: {title}.")
     # Собираем данные двумя методами
     html_price_raw = extract_price_by_html(soup)
     json_price = extract_price_by_json(html_content)

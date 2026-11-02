@@ -16,22 +16,24 @@ async def try_connect(page, url: str):
             price, title = await process_magnit(page, url)
             if price:
                 print(f"Товар: {title}. Цена: {price}")
+                return price, title
             else:
                 print("Цена не найдена")
+                return None, title
         elif "ozon" in url.lower():
-            pass
+            return None, "Озон пока в разработке"
         elif "wb" in url.lower():
-            pass
+            return None, "ВБ пока в разработке"
     except requests.exceptions.RequestException as net_error:
         logging.error(f"Ошибка сети при запросе к маркетплейсу: {net_error}")
-        return "Не удалось соеденится. Проверьте соединение"
+        return None, "Не удалось соеденится. Проверьте соединение"
     except (ValueError, KeyError, TypeError) as parse_error:
         logging.error(f"Изменилась структура сайта: {parse_error}")
-        return "Не удалось распознать данные на странице товара."
+        return None, "Не удалось распознать данные на странице товара."
 # 2. Асинхронная функция запуска браузера с помощью cookie из другого файла(пока только магнит)
 async def main(url_suite: str):
     if not url_suite:
-        return
+        return None, "Ошибка! Ссылка пуста"
     async with async_playwright() as p:
         # Временная папка гостевого профиля
         guest_profile = os.path.join(os.getcwd(), "guest_browse_data")
@@ -53,10 +55,15 @@ async def main(url_suite: str):
         # Берем чистую вкладку
         page=context.pages[0] if context.pages else await context.new_page()
         # Тестируем вход на сайт
-        await try_connect(page, url_suite)
+        price, title = await try_connect(page, url_suite)
         await asyncio.sleep(10)
         await context.close()
+        return price, title
+
 
 # Тест
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Для теста передаем тестовую ссылку прямо в консоли
+    test_url = input("Введите ссылку для теста: ")
+    if test_url:
+        asyncio.run(main(test_url))

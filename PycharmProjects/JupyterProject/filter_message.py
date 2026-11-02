@@ -10,10 +10,11 @@ from test_connection import main
 # 1. Формируем модель данных
 class FilterMessage(BaseModel):
     product_id: List[int] = Field(default=[], description="Полученный ID товара")
-    links: List[str] = Field(default=[], description="Все найденные ссылки")
+    link: List[str] = Field(default=[], description="Все найденные ссылки")
     top_limit: Optional[int] = Field(default=None, ge=1, le=5, description="Лимит вывода товаров(от 1 до 5)")
     days_depth: Optional[int] = Field(default=None, ge=6, le=99, description="Глубина истории(от 6 до 100)")
-    command: Optional[str] = Field(default=None, description="Кодовые знаки")
+    price: Optional[float] = Field(default=None, description="Актуальная цена")
+    title: Optional[str] = Field(default=None, description="Название товара")
     clean_text: str = Field(default="", description="Весь чистый текст")
 
     # Защита от записи нуля в top_limit и days_depth
@@ -28,20 +29,32 @@ class FilterMessage(BaseModel):
 # Регулярные выражения создаются один раз при запуске модуля для ускорения процесса
 URL_PATTERN = re.compile(r'\bhttps?://[^\s,]+')
 NUMBER_PATTERN = re.compile(r'\b\d{1,2}\b')
+SKU_ID = re.compile(r'\b\d{7,11}\b')
 
 # 2. Функция определения и распределения полученной ссылки
-def filter_url(raw_text: str) -> Optional[str]:
+def filter_url(raw_text: str, current_model: FilterMessage) -> Optional[FilterMessage]:
     found_links = URL_PATTERN.findall(raw_text)
+    found_id = SKU_ID.findall(raw_text)
     if not found_links:
         return None
 
     if len(found_links) > 1:
-        return "Ошибка! Я могу обработать только одну ссылку!"
+        current_model.clean_text = "Ошибка! Я могу обработать только одну ссылку!"
+        return current_model
 
     target_url = found_links[0]
-    logging.info(f"В сообщении обнаружена ссылка: {target_url}")
-    price_report = asyncio.run(main(target_url))
-    return price_report
+    logging.info(f"В сообщении обнаружена ссылка: {target_url}, ID: {found_id}")
+    price_report, title = asyncio.run(main(target_url))
+    current_model.link = [target_url]
+    current_model.product_id = [int(i) for i in found_id]
+    current_model.price = price_report
+    current_model.title = title
+    if price_report:
+        current_model.clean_text = f"Товар: {title} с ценой: {price_report} успешно добавлен в Базу"
+    else:
+        current_model.clean_text = f"Товар: {title} найден, но на странице нет актуальной цены"
+    print(current_model)
+    return current_model
 
 # 3. Функция приема спецкоманд
 def filter_command(raw_text: str) -> Optional[str]:
@@ -95,30 +108,38 @@ def parse_text_and_numbers(raw_text: str, current_model: FilterMessage) -> Filte
     return current_model
 
 # 5. Функция распределения принимаемых данных
-# =====================================================================
 def analyze_message(raw_text: str, peer_id: int) -> str:
-    # Проверка на наличие ссылок
-    url_reply = filter_url(raw_text)
-    if url_reply:
-        return url_reply
-
-    # Проверка на секретные команды
+    # 1. Проверка на спецкомандs (выполняется сразу, без модели)
     command_reply = filter_command(raw_text)
     if command_reply:
         return command_reply
 
-    # Шаг 3: Текстовый поисковый запрос
-    # Создаем пустую модель и наполняем её через парсер чисел
+    # Создаем модель в самом начале
     model_data = FilterMessage()
+
+    # 2. Проверяем наличие ссылок, отправляем на анализ и вполучаем модель
+    if URL_PATTERN.search(raw_text):
+        filled_url_model = filter_url(raw_text, model_data)
+        return filled_url_model.clean_text
+
+    # 3 Проверка на текстовый запрос (если ссылки в сообщении не было)
     parsed_model = parse_text_and_numbers(raw_text, model_data)
     if not parsed_model.clean_text:
         return "Запрос пуст. Пожалуйста, напишите название товара."
 
-   # Требует доработки!!!  TODO: WARNING: Отправляем готовую заполненную модель на анализ данных
+    print(f"Текстовая модель успешно собрана: {parsed_model}")
+
+    # 4 Временная заглушка для ИИ-поиска
     try:
-        search_result = "Тут заглушка" # process_text_recognition(parsed_model, peer_id)
+        # Пока ИИ-поиск process_text_recognition временно отключен,
+        search_result = f"Ищем: '{parsed_model.clean_text}' | Топ: {parsed_model.top_limit} | Дней: {parsed_model.days_depth}"
         return search_result
-    # Перехватываем ошибки разбора или анализа данных и отправляем ошибку дальше, Боту.
+
     except (ValueError, KeyError, TypeError) as search_error:
-        logging.error(f"Ошибка обработки: {search_error}")
+        logging.error(f"Ошибка ИИ-обработки текстового запроса: {search_error}")
         raise search_error
+
+
+
+
+
