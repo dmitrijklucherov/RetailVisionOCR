@@ -40,7 +40,7 @@ async def main(url_suite: str):
         # Запуск браузера
         context = await p.chromium.launch_persistent_context(
             user_data_dir=guest_profile,
-            headless=HEADLESS_MODE,
+            headless=False ,
             no_viewport=True,
             ignore_default_args=["--enable-automation"],
             args=[

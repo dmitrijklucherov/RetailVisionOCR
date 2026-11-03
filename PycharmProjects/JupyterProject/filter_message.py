@@ -12,7 +12,7 @@ class FilterMessage(BaseModel):
     product_id: List[int] = Field(default=[], description="Полученный ID товара")
     link: List[str] = Field(default=[], description="Все найденные ссылки")
     top_limit: Optional[int] = Field(default=None, ge=1, le=5, description="Лимит вывода товаров(от 1 до 5)")
-    days_depth: Optional[int] = Field(default=None, ge=6, le=99, description="Глубина истории(от 6 до 100)")
+    days_depth: Optional[int] = Field(default=None, ge=6, le=99, description="Глубина истории(от 6 до 99)")
     price: Optional[float] = Field(default=None, description="Актуальная цена")
     title: Optional[str] = Field(default=None, description="Название товара")
     clean_text: str = Field(default="", description="Весь чистый текст")

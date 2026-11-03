@@ -3,6 +3,10 @@ import re
 from typing import Optional, Tuple
 from bs4 import BeautifulSoup
 
+# Ищет подстроку shopCode= или merchantId=, за которой идут цифры (от 5 до 8 знаков)
+SHOP_CODE_PATTERN = re.compile(r'(?:shopCode|merchantId)=(?:%22)?(\d{5,8})(?:%22)?')
+
+
 # 1.Функция поиска цены в HTML
 def extract_price_by_html(soup: BeautifulSoup) -> Optional[int]:
     try:
@@ -54,9 +58,17 @@ async def get_magnit_data(html_content: str) -> Tuple[Optional[float ], str]:
 # Локальные настройки браузера только для "Магнит"
 async def process_magnit(page, url: str) -> Tuple[Optional[float], str]:
     try:
+        match = SHOP_CODE_PATTERN.search(url)
+        if match:
+            extracted_shop = match.group(1)
+            current_shop_code = f"%22{extracted_shop}%22"
+            print(f"Код магазина: {current_shop_code}")
+        else:
+            current_shop_code = "%22570061%22"
+            print("Код не найден")
         await page.context.add_cookies([{
             "name": "shopCode",
-            "value": "%22570061%22",
+            "value": current_shop_code,
             "domain": "magnit.ru",
             "path": "/"
         }])
