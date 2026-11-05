@@ -5,6 +5,7 @@ import requests
 
 from playwright.async_api import async_playwright
 from magnit_parser import process_magnit
+from ozon_parser import process_ozon, parse_ozon_page_data
 
 # Управляем режимом браузера через .env (для теста на ПК показываем, для сервера нет)
 HEADLESS_MODE = os.getenv("HEADLESS", "True").lower() == "true"
@@ -21,9 +22,17 @@ async def try_connect(page, url: str):
                 print("Цена не найдена")
                 return None, title
         elif "ozon" in url.lower():
-            return None, "Озон пока в разработке"
+            price, title = await process_ozon(page, url)
+            if price:
+                print(f"Товар: {title}. Цена: {price}")
+                return price, title
+            else:
+                print("Цена не найдена")
+                return None, title
         elif "wb" in url.lower():
             return None, "ВБ пока в разработке"
+        else:
+            return None, "Неудалось распознать данные нас транице"
     except requests.exceptions.RequestException as net_error:
         logging.error(f"Ошибка сети при запросе к маркетплейсу: {net_error}")
         return None, "Не удалось соеденится. Проверьте соединение"

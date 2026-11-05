@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 from typing import Optional, Tuple
 from bs4 import BeautifulSoup
@@ -16,9 +17,18 @@ def extract_price_by_html(soup: BeautifulSoup) -> Optional[int]:
             price_text = "".join([c for c in price_el.text if c.isdigit()])
             if price_text:
                 return int(price_text)
-    except Exception as e:
-        print(f"Ошибка HTL: {e}")
+    # Проблемы:
+    # 1. Изменился HTML
+    except AttributeError as attr_error:
+        logging.error(f"[Ошибка структуры Магнит: HTML] Изменились HTML-атрибуты цены: {attr_error}")
+    # 2. Неверный тип данных
+    except ValueError as value_error:
+        logging.error(f"[Ошибка типов Магнит: HTML] Не удалось преобразовать текст цены: {value_error}")
+    # 3. Все остальные ошибки
+    except Exception as unexpected_error:
+        logging.error(f"[Критический сбой Магнит: HTML] Непредвиденная ошибка: {unexpected_error}")
     return None
+
 # 2.Функция поиска цены в JSON
 def extract_price_by_json(html_text: str) -> Optional[float]:
     try:
@@ -29,33 +39,50 @@ def extract_price_by_json(html_text: str) -> Optional[float]:
         match_fallback = re.search(r'"price":\s*(\d+)', html_text)
         if match_fallback:
             return float(match_fallback.group(1))
-    except Exception as e:
-        print(f"Ошибка JSON: {e}")
+    # Проблемы:
+    # 1. Неверный тип данных
+    except (ValueError, TypeError) as type_error:
+        logging.error(f"[Ошибка типов Магнит: JSON] Некорректный формат цены: {type_error}")
+    # 2. Все остальные ошибки
+    except Exception as unexpected_error:
+        print(f"[Критический сбой Магнит: JSON] Непредвиденная ошибка: {unexpected_error}")
     return None
-# Функция сбора данных и предоставления отчета
+
+# 3. Функция сбора данных и предоставления отчета
 async def get_magnit_data(html_content: str) -> Tuple[Optional[float ], str]:
-    soup = BeautifulSoup(html_content, "html.parser")
-    # Извлекаем название товара
-    title_el = soup.find("h1")
-    title = title_el.text.strip() if title_el else "Товар Магнит"
-    print(f"Товар определен: {title}.")
-    # Собираем данные двумя методами
-    html_price_raw = extract_price_by_html(soup)
-    json_price = extract_price_by_json(html_content)
-    # Переводим копейуи в рубли
-    html_price = (html_price_raw / 100) if html_price_raw is not None else None
-    # Поиск цены: 1.Оба источника. 2.Из HTML. 3.Из JSON скрипта. 4.Ничего не нашли
-    if html_price is not None and json_price is not None:
-        if html_price == json_price:
+    try:
+        soup = BeautifulSoup(html_content, "html.parser")
+        # Извлекаем название товара
+        title_el = soup.find("h1")
+        title = title_el.text.strip() if title_el else "Товар Магнит"
+        print(f"Товар определен: {title}.")
+        # Собираем данные двумя методами
+        html_price_raw = extract_price_by_html(soup)
+        json_price = extract_price_by_json(html_content)
+        # Переводим копейуи в рубли
+        html_price = (html_price_raw / 100) if html_price_raw is not None else None
+        # Поиск цены: 1.Оба источника. 2.Из HTML. 3.Из JSON скрипта. 4.Ничего не нашли
+        if html_price is not None and json_price is not None:
+            if html_price == json_price:
+                return html_price, title
+            else:
+                return html_price, title
+        if html_price is not None:
             return html_price, title
-        else:
-           return html_price, title
-    if html_price is not None:
-        return html_price, title
-    if json_price is not None:
-        return json_price, title
-    return None, title
-# Локальные настройки браузера только для "Магнит"
+        if json_price is not None:
+            return json_price, title
+        return None, title
+    # Проблемы:
+    # 1. Неверная структура данных
+    except AttributeError as attr_error:
+        logging.error(f"[Ошибка структуры Магнит: title] Нарушена логика тегов при сборке: {attr_error}")
+        return None, "Ошибка разбора структуры Магнит"
+    # 2. Все остальные ошибки
+    except Exception as unexpected_error:
+        logging.error(f"[Критический сбой Магнит: title] Непредвиденная ошибка: {unexpected_error}")
+        return None, "Внутренняя ошибка при сборке данных"
+
+# 4. Локальные настройки браузера только для "Магнит"
 async def process_magnit(page, url: str) -> Tuple[Optional[float], str]:
     try:
         match = SHOP_CODE_PATTERN.search(url)
@@ -82,5 +109,12 @@ async def process_magnit(page, url: str) -> Tuple[Optional[float], str]:
         await asyncio.sleep(2)
         html_content = await page.content()
         return await get_magnit_data(html_content)
-    except Exception as e:
-        return None, f"Ошибка парсинга {e}"
+    # Проблемы:
+    # 1. Сайт не ответил за указанное в коде время
+    except asyncio.TimeoutError:
+        logging.error(f"[Таймаут Магнит] Сайт не ответил за 30 сек по ссылке: {url}")
+        return None, "превышено время ожидания сайта Магнит"
+    # 2. Все остальные ошибки
+    except Exception as core_error:
+        logging.error(f"[Движок Магнит] Критический сбой сессии: {core_error}")
+        return None, "Внутренняя ошибка подсистемы браузера"

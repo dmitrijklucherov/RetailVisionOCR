@@ -8,3 +8,5 @@ COPY.py
 __pycache__/
 guest_browse_data/
 logs/
+IDEA
+ozon_cookies.json
