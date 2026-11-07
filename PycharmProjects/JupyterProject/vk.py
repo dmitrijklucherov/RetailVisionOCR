@@ -2,14 +2,18 @@ import os
 import time
 import logging
 import requests
+import asyncio
+
 from dotenv import load_dotenv
+from psycopg import OperationalError
+from psycopg_pool import PoolTimeout
 from vk_api import vk_api
 from vk_api.bot_longpoll import VkBotEventType, VkBotLongPoll
 from vk_api.exceptions import ApiError
 
-from filter_message import analyze_message
 
-# from filter_message import "Функция для передачи - строка 23"
+
+from filter_message import analyze_message, db #"Функция для передачи - строка 23"
 
 load_dotenv()
 TOKEN = os.getenv("VK_TOKEN")
@@ -54,7 +58,7 @@ def handle_event(event, vk):
 def start_bot():
     vk_session = vk_api.VkApi(token=TOKEN)
     vk = vk_session.get_api()
-
+    # Бесконечное прослушивание сообщений ВК
     while True:
         try:
             longpoll = VkBotLongPoll(vk_session, group_id=GROUP_ID)

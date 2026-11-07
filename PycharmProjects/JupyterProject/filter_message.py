@@ -2,10 +2,16 @@ import asyncio
 import logging
 import os
 import re
+import selectors
 
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 from test_connection import main
+from data_base import Database
+from psycopg import OperationalError, IntegrityError, DataError
+from psycopg_pool import PoolTimeout
+
+db = Database()
 
 # 1. Формируем модель данных
 class FilterMessage(BaseModel):
@@ -117,9 +123,48 @@ def analyze_message(raw_text: str, peer_id: int) -> str:
     # Создаем модель в самом начале
     model_data = FilterMessage()
 
-    # 2. Проверяем наличие ссылок, отправляем на анализ и вполучаем модель
+    # 2. Проверяем наличие ссылок, отправляем на анализ и получаем модель
     if URL_PATTERN.search(raw_text):
         filled_url_model = filter_url(raw_text, model_data)
+        if not filled_url_model:
+            return "Произошла ошибка при обработке ссылки"
+        # Собираем одиночные значения из модели для записи в БД
+        price = filled_url_model.price
+        title = filled_url_model.title
+        url = filled_url_model.link[0] if filled_url_model.link else ""
+        sku_id = filled_url_model.product_id[0] if filled_url_model.product_id else None
+        # Если данные существуют, то записываем их в БД
+        if price is not None and sku_id is not None:
+            try:
+                db_history = asyncio.run(db.insert_and_retail_data(
+                    vk_id=peer_id,
+                    url=url,
+                    sku_id=sku_id,
+                    price=price,
+                    stock_count=99,
+                    title=title
+                ),
+                    loop_factory=lambda: asyncio.SelectorEventLoop(selectors.SelectSelector())
+                )
+                if db_history:
+                    filled_url_model.clean_text = f"Товар: {title} с ценой: {price}руб. успешно добавлен в Базу."
+                else:
+                    filled_url_model.clean_text = f"Ошибка: База данных отклонила запись"
+            # Проблемы:
+            # 1. Сервер перегружен
+            except PoolTimeout as pool_error:
+                logging.error(f"[БД Таймаут] Все соединения пула заняты: {pool_error}")
+                filled_url_model.clean_text = f"Товар: {title} получен, но сервер перегружен. Повторите запрос позже"
+            # 2. Ошибка сети
+            except OperationalError as net_db_error:
+                logging.error(f"[БД Сеть] Нет связи с сервером PostgreSQL: {net_db_error}")
+                filled_url_model.clean_text = f"Товар: {title} получен, но база данных временно недоступна"
+            # 3. Ошибка данных
+            except (IntegrityError, DataError) as sql_error:
+                logging.error(f"[БД SQL Ошибка] Нарушение типов или ключей при записи: {sql_error}")
+                filled_url_model.clean_text = f"Товар: {title} получен, но произошла внутренняя ошибка"
+        else:
+            filled_url_model.clean_text = f"Товар: {title} найден, но на странице не получилось взять цену или не определен артикул"
         return filled_url_model.clean_text
 
     # 3 Проверка на текстовый запрос (если ссылки в сообщении не было)
@@ -138,6 +183,8 @@ def analyze_message(raw_text: str, peer_id: int) -> str:
     except (ValueError, KeyError, TypeError) as search_error:
         logging.error(f"Ошибка ИИ-обработки текстового запроса: {search_error}")
         raise search_error
+
+
 
 
 
