@@ -1,7 +1,8 @@
 import os
+from typing import Optional, List, Tuple, Any
 
 from dotenv import load_dotenv
-from psycopg import AsyncConnection
+from psycopg import AsyncConnection, Connection
 
 load_dotenv()
 
@@ -19,7 +20,7 @@ class Database:
                 "port": "5432"
             }
     # Асинхронная функция для записи данных сразу в три таблицы и возврата всей истории цены
-    async def insert_and_retail_data(self, vk_id, url, sku_id, price, stock_count, title):
+    async def insert_and_retail_data(self, vk_id: int, url: str, sku_id: int, price: float, stock_count: int, title: str) -> Optional[List[Tuple[Any, ...]]]:
         # Блокируем запись нулей в цену и id
         if sku_id == 0 or price == 0:
             return None
@@ -87,7 +88,7 @@ class Database:
     # Ограничиваем поиск по времени, вместо заглушки '%s' будут наши входные данные и результат присваиваем новой переменной 'min_price'
     # Берем таблицу 'p', присоеденяем к ней таблицу 'h' только по совпадению значений 'product_id'
     # Выбираем только те ссылки где есть наше искомое значение '%s', сортируем по дате, возвращаем одно отсортированное значение
-    async def get_product_analytics_data(self, search_word, months_limit):
+    async def get_product_analytics_data(self, search_word: str, months_limit: int) -> Optional[Tuple[Any, ...]]:
         query_products = """
             select p.url, p.product_code, h.price, 
                 (select min(price) from price_history where product_code = p.product_code and check_date >= now() - make_interval (months => %s)) as min_price
@@ -107,15 +108,15 @@ class Database:
                 return await cursor.fetchone()
 
     # Функция для ежедневного обновления по расписанию
-    async def get_unique_urls_for_update(self):
+    def get_unique_urls_for_update(self) -> List[Tuple[Any, ...]]:
         # Возвращаем список всех уникальных ссылок для ежедневного парсинига
-        query = "select products_code, url from products;"
-        async with await AsyncConnection.connect(**self._get_db_config()) as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(query)
-                return await cursor.fetchall()
+        query = "select product_code, url from products;"
+        with Connection.connect(**self._get_db_config()) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                return cursor.fetchall()
     # Функция выгрузки данных из базы в нейросеть
-    async def get_all_products_for_ai(self):
+    async def get_all_products_for_ai(self) -> List[Tuple[Any, ...]]:
         async with await AsyncConnection.connect(**self._get_db_config()) as conn:
             async with conn.cursor() as cursor:
                 query_ai = """
@@ -124,6 +125,18 @@ class Database:
                 """
                 await cursor.execute(query_ai)
                 return await cursor.fetchall()
+    # Функция записи новой цены в таблицу при ежедневном обновлении
+    def insert_cron_price(self, product_code: str, price: float) -> None:
+        if price == 0:
+            return
+        query = """
+        insert into price_history (product_code, price, check_date)
+        values (%s, %s, now());
+        """
+        with Connection.connect(**self._get_db_config()) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (product_code, price))
+
 
 
 

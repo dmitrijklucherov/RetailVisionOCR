@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+from typing import Tuple, Optional
+
 import requests
 
 from playwright.async_api import async_playwright
@@ -11,34 +13,34 @@ from ozon_parser import process_ozon, parse_ozon_page_data
 HEADLESS_MODE = os.getenv("HEADLESS", "True").lower() == "true"
 
 # 1. Асинхронная функция приема и распределения ссылки по другим файлам для получения названия и цены
-async def try_connect(page, url: str):
+async def try_connect(page, url: str) -> Tuple[Optional[float], str, Optional[int]]:
     try:
         if "magnit" in url.lower():
             price, title = await process_magnit(page, url)
             if price:
                 print(f"Товар: {title}. Цена: {price}")
-                return price, title
+                return price, title, None
             else:
                 print("Цена не найдена")
-                return None, title
+                return None, title, None
         elif "ozon" in url.lower():
-            price, title = await process_ozon(page, url)
+            price, title, sku_id = await process_ozon(page, url)
             if price:
                 print(f"Товар: {title}. Цена: {price}")
-                return price, title
+                return price, title, sku_id
             else:
                 print("Цена не найдена")
-                return None, title
+                return None, title, sku_id
         elif "wb" in url.lower():
-            return None, "ВБ пока в разработке"
+            return None, "ВБ пока в разработке", None
         else:
-            return None, "Неудалось распознать данные нас транице"
+            return None, "Неудалось распознать данные нас транице", None
     except requests.exceptions.RequestException as net_error:
         logging.error(f"Ошибка сети при запросе к маркетплейсу: {net_error}")
-        return None, "Не удалось соеденится. Проверьте соединение"
+        return None, "Не удалось соеденится. Проверьте соединение", None
     except (ValueError, KeyError, TypeError) as parse_error:
         logging.error(f"Изменилась структура сайта: {parse_error}")
-        return None, "Не удалось распознать данные на странице товара."
+        return None, "Не удалось распознать данные на странице товара.", None
 # 2. Асинхронная функция запуска браузера с помощью cookie из другого файла(пока только магнит)
 async def main(url_suite: str):
     if not url_suite:
@@ -49,7 +51,7 @@ async def main(url_suite: str):
         # Запуск браузера
         context = await p.chromium.launch_persistent_context(
             user_data_dir=guest_profile,
-            headless=False ,
+            headless=False,
             no_viewport=True,
             ignore_default_args=["--enable-automation"],
             args=[
@@ -64,10 +66,10 @@ async def main(url_suite: str):
         # Берем чистую вкладку
         page=context.pages[0] if context.pages else await context.new_page()
         # Тестируем вход на сайт
-        price, title = await try_connect(page, url_suite)
+        price, title, sku_id = await try_connect(page, url_suite)
         await asyncio.sleep(10)
         await context.close()
-        return price, title
+        return price, title, sku_id
 
 
 # Тест

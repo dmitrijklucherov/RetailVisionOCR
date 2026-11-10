@@ -50,12 +50,12 @@ def filter_url(raw_text: str, current_model: FilterMessage) -> Optional[FilterMe
 
     target_url = found_links[0]
     logging.info(f"В сообщении обнаружена ссылка: {target_url}, ID: {found_id}")
-    price_report, title = asyncio.run(main(target_url))
+    price_report, title, parsed_sku = asyncio.run(main(target_url))
     current_model.link = [target_url]
-    current_model.product_id = [int(i) for i in found_id]
+    current_model.product_id = [parsed_sku] if parsed_sku is not None else []
     current_model.price = price_report
     current_model.title = title
-    if price_report:
+    if price_report and parsed_sku:
         current_model.clean_text = f"Товар: {title} с ценой: {price_report} успешно добавлен в Базу"
     else:
         current_model.clean_text = f"Товар: {title} найден, но на странице нет актуальной цены"
@@ -130,7 +130,7 @@ def analyze_message(raw_text: str, peer_id: int) -> str:
             return "Произошла ошибка при обработке ссылки"
         # Собираем одиночные значения из модели для записи в БД
         price = filled_url_model.price
-        title = filled_url_model.title
+        title = filled_url_model.title if filled_url_model.title is not None else "Товар Ozon"
         url = filled_url_model.link[0] if filled_url_model.link else ""
         sku_id = filled_url_model.product_id[0] if filled_url_model.product_id else None
         # Если данные существуют, то записываем их в БД
@@ -164,7 +164,7 @@ def analyze_message(raw_text: str, peer_id: int) -> str:
                 logging.error(f"[БД SQL Ошибка] Нарушение типов или ключей при записи: {sql_error}")
                 filled_url_model.clean_text = f"Товар: {title} получен, но произошла внутренняя ошибка"
         else:
-            filled_url_model.clean_text = f"Товар: {title} найден, но на странице не получилось взять цену или не определен артикул"
+            filled_url_model.clean_text = f"Товар: {title} найден, но на странице не получилось взять цену или не определен артикул {sku_id}"
         return filled_url_model.clean_text
 
     # 3 Проверка на текстовый запрос (если ссылки в сообщении не было)
